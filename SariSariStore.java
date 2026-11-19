@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
@@ -30,7 +31,10 @@ import java.util.List;
  * Tab 2  Sell           - record a sale, computes total and change, reduces stock
  * Tab 3  Sales History  - list of sales with total (today or all)
  *
- * Data is saved in local CSV files (products.csv, sales.csv) - no database.
+ * Tab 4  Admin          - (Admin only) accounts, who logged in, activity log
+ *
+ * Every account has its OWN products and sales (products_<user>.csv, sales_<user>.csv).
+ * No database is used.
  */
 public class SariSariStore extends JFrame {
 
@@ -94,6 +98,11 @@ public class SariSariStore extends JFrame {
     private DefaultTableModel salesModel;
     private JLabel lblSalesSummary;
 
+    // Admin tab
+    private DefaultTableModel accountsModel, logModel;
+    private JTable adminTable;
+    private JLabel lblAdminSummary;
+
     // ======================================================================
     //  Constructor / main layout
     // ======================================================================
@@ -132,6 +141,7 @@ public class SariSariStore extends JFrame {
         tabs.addTab("Products", buildProductsTab());
         tabs.addTab("Sell", buildSellTab());
         tabs.addTab("Sales History", buildSalesTab());
+        if (currentRole.equals("Admin")) tabs.addTab("Admin", buildAdminTab());
         tabs.addChangeListener(e -> refreshAll());
         add(tabs, BorderLayout.CENTER);
 
@@ -268,15 +278,12 @@ public class SariSariStore extends JFrame {
     private void logout() {
         int ok = JOptionPane.showConfirmDialog(this, "Log out of the system?", "Log out", JOptionPane.YES_NO_OPTION);
         if (ok != JOptionPane.YES_OPTION) return;
+        StoreUserStore.log(currentUser, "Logout", "");
         StoreLoginFrame.open();
         dispose();
     }
 
     private void deleteProduct() {
-        if (!currentRole.equals("Admin")) {
-            showError("Only an Admin can delete products.");
-            return;
-        }
         if (selected == null) {
             showError("Please click a product in the table first.");
             return;
@@ -550,6 +557,138 @@ public class SariSariStore extends JFrame {
     }
 
     // ======================================================================
+    //  TAB 4: Admin (only visible to Admin accounts)
+    // ======================================================================
+    private JPanel buildAdminTab() {
+        JPanel root = new JPanel(new BorderLayout(0, 10));
+        root.setBorder(new EmptyBorder(12, 15, 10, 15));
+
+        // Accounts
+        JPanel top = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 2));
+        lblAdminSummary = new JLabel(" ");
+        lblAdminSummary.setFont(lblAdminSummary.getFont().deriveFont(Font.BOLD, 13f));
+        JButton bView = new JButton("View user's store data");
+        JButton bRole = new JButton("Change role (Admin / Staff)");
+        JButton bDel = new JButton("Delete account");
+        JButton bRef = new JButton("Refresh");
+        bView.addActionListener(e -> viewUserData());
+        bRole.addActionListener(e -> changeRole());
+        bDel.addActionListener(e -> deleteAccount());
+        bRef.addActionListener(e -> refreshAdmin());
+        top.add(bView);
+        top.add(bRole);
+        top.add(bDel);
+        top.add(bRef);
+        top.add(Box.createHorizontalStrut(10));
+        top.add(lblAdminSummary);
+
+        accountsModel = readOnlyModel("Username", "Role", "Created", "Last login", "Logins", "Products", "Total sales");
+        adminTable = new JTable(accountsModel);
+        styleTable(adminTable);
+        adminTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+
+        JPanel accounts = new JPanel(new BorderLayout(0, 4));
+        accounts.setBorder(BorderFactory.createTitledBorder("Accounts (who created an account)"));
+        accounts.add(top, BorderLayout.NORTH);
+        accounts.add(new JScrollPane(adminTable), BorderLayout.CENTER);
+
+        // Activity log
+        logModel = readOnlyModel("Date & Time", "User", "Activity", "Details");
+        JTable logTable = new JTable(logModel);
+        styleTable(logTable);
+        JPanel log = new JPanel(new BorderLayout());
+        log.setBorder(BorderFactory.createTitledBorder("Activity log (who accessed the system)"));
+        log.add(new JScrollPane(logTable), BorderLayout.CENTER);
+
+        JPanel both = new JPanel(new GridLayout(2, 1, 0, 10));
+        both.add(accounts);
+        both.add(log);
+        root.add(both, BorderLayout.CENTER);
+        return root;
+    }
+
+    private void refreshAdmin() {
+        if (accountsModel == null) return;
+        accountsModel.setRowCount(0);
+        List<StoreUserStore.User> users = StoreUserStore.allUsers();
+        for (StoreUserStore.User u : users) {
+            accountsModel.addRow(new Object[]{u.name, u.role, u.created.isEmpty() ? "-" : u.created,
+                    u.lastLogin.isEmpty() ? "never" : u.lastLogin, u.logins,
+                    StoreUserStore.countProducts(u.name), CUR + money(StoreUserStore.totalSales(u.name))});
+        }
+        logModel.setRowCount(0);
+        List<String[]> log = StoreUserStore.readLog();
+        for (int i = log.size() - 1; i >= 0; i--) {                    // newest first
+            String[] r = log.get(i);
+            logModel.addRow(new Object[]{r[0], r[1], r[2], r[3]});
+        }
+        lblAdminSummary.setText("Accounts: " + users.size() + "   |   Log entries: " + log.size());
+    }
+
+    private String selectedAccount() {
+        int r = adminTable.getSelectedRow();
+        if (r < 0) {
+            showError("Please click an account in the Accounts table first.");
+            return null;
+        }
+        return (String) accountsModel.getValueAt(r, 0);
+    }
+
+    private void changeRole() {
+        String user = selectedAccount();
+        if (user == null) return;
+        if (user.equalsIgnoreCase(currentUser)) {
+            showError("You can't change your own role.");
+            return;
+        }
+        String newRole = StoreUserStore.roleOf(user).equals("Admin") ? "Staff" : "Admin";
+        StoreUserStore.setRole(user, newRole);
+        StoreUserStore.log(currentUser, "Role changed", user + " is now " + newRole);
+        refreshAdmin();
+        setStatus(user + " is now " + newRole + ".");
+    }
+
+    private void deleteAccount() {
+        String user = selectedAccount();
+        if (user == null) return;
+        if (user.equalsIgnoreCase(currentUser)) {
+            showError("You can't delete the account you are using.");
+            return;
+        }
+        int ok = JOptionPane.showConfirmDialog(this, "Delete the account \"" + user
+                + "\"?\nTheir saved store data files stay in the folder.", "Delete account", JOptionPane.YES_NO_OPTION);
+        if (ok != JOptionPane.YES_OPTION) return;
+        StoreUserStore.deleteUser(user);
+        StoreUserStore.log(currentUser, "Account deleted", user);
+        refreshAdmin();
+        setStatus("Account deleted: " + user);
+    }
+
+    /** Read-only window with the products and sales of the selected account. */
+    private void viewUserData() {
+        String user = selectedAccount();
+        if (user == null) return;
+        DefaultTableModel pm = readOnlyModel("Code", "Product", "Category", "Price", "Stock");
+        for (List<String> f : StoreUserStore.readCsv(StoreUserStore.dataFile(user, "products", false))) {
+            if (f.size() >= 5) pm.addRow(new Object[]{f.get(0), f.get(1), f.get(2), CUR + f.get(3), f.get(4)});
+        }
+        DefaultTableModel sm = readOnlyModel("Date & Time", "Product", "Quantity", "Total");
+        List<List<String>> rows = StoreUserStore.readCsv(StoreUserStore.dataFile(user, "sales", false));
+        for (int i = rows.size() - 1; i >= 0; i--) {
+            List<String> f = rows.get(i);
+            if (f.size() >= 4) sm.addRow(new Object[]{f.get(0), f.get(1), f.get(2), CUR + f.get(3)});
+        }
+        JTable pt = new JTable(pm), st = new JTable(sm);
+        styleTable(pt);
+        styleTable(st);
+        JTabbedPane tp = new JTabbedPane();
+        tp.addTab("Products", new JScrollPane(pt));
+        tp.addTab("Sales", new JScrollPane(st));
+        tp.setPreferredSize(new Dimension(640, 320));
+        JOptionPane.showMessageDialog(this, tp, user + "'s store data (view only)", JOptionPane.PLAIN_MESSAGE);
+    }
+
+    // ======================================================================
     //  Refresh
     // ======================================================================
     private void refreshAll() {
@@ -557,6 +696,7 @@ public class SariSariStore extends JFrame {
         refreshProducts();
         refreshSellCombo();
         refreshSales();
+        refreshAdmin();
     }
 
     private void refreshProducts() {
@@ -651,18 +791,18 @@ public class SariSariStore extends JFrame {
         try {
             List<String> pl = new ArrayList<>();
             for (Product p : products) pl.add(p.toCsv());
-            Files.write(Paths.get(PRODUCTS_FILE), pl, StandardCharsets.UTF_8);
+            Files.write(StoreUserStore.dataFile(currentUser, "products", true), pl, StandardCharsets.UTF_8);
 
             List<String> sl = new ArrayList<>();
             for (Sale s : sales) sl.add(s.toCsv());
-            Files.write(Paths.get(SALES_FILE), sl, StandardCharsets.UTF_8);
+            Files.write(StoreUserStore.dataFile(currentUser, "sales", true), sl, StandardCharsets.UTF_8);
         } catch (IOException ex) {
             showError("Could not save data: " + ex.getMessage());
         }
     }
 
     private void loadData() {
-        Path pp = Paths.get(PRODUCTS_FILE);
+        Path pp = StoreUserStore.dataFile(currentUser, "products", false);
         if (!Files.exists(pp)) {
             seedSampleData();                                           // first run only
             saveAll();
@@ -684,7 +824,7 @@ public class SariSariStore extends JFrame {
                     // skip a damaged line
                 }
             }
-            Path sp = Paths.get(SALES_FILE);
+            Path sp = StoreUserStore.dataFile(currentUser, "sales", false);
             if (Files.exists(sp)) {
                 for (String line : Files.readAllLines(sp, StandardCharsets.UTF_8)) {
                     List<String> f = splitCsv(line);
@@ -801,27 +941,86 @@ public class SariSariStore extends JFrame {
 // ==========================================================================
 class StoreUserStore {
     private static final String FILE = "store_users.csv";
+    private static final String LOG_FILE = "store_activity.csv";
+    private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    /** One account. */
+    static class User {
+        String name, salt, hash, role, created = "", lastLogin = "";
+        int logins;
+
+        String toCsv() {
+            return name + "," + salt + "," + hash + "," + role + "," + created + "," + lastLogin + "," + logins;
+        }
+    }
+
+    private static String now() {
+        return LocalDateTime.now().format(STAMP);
+    }
 
     /** First run: create the default admin account. */
     static void ensureDefaults() {
         if (Files.exists(Paths.get(FILE))) return;
+        List<User> list = new ArrayList<>();
+        list.add(newUser("admin", "admin123", "Admin"));
+        saveUsers(list);
+    }
+
+    static List<User> allUsers() {
+        List<User> out = new ArrayList<>();
+        try {
+            if (Files.exists(Paths.get(FILE))) {
+                for (String l : Files.readAllLines(Paths.get(FILE), StandardCharsets.UTF_8)) {
+                    if (l.isBlank()) continue;
+                    String[] p = l.split(",", -1);
+                    if (p.length < 4) continue;
+                    User u = new User();
+                    u.name = p[0];
+                    u.salt = p[1];
+                    u.hash = p[2];
+                    u.role = p[3];
+                    if (p.length >= 5) u.created = p[4];
+                    if (p.length >= 6) u.lastLogin = p[5];
+                    if (p.length >= 7) {
+                        try {
+                            u.logins = Integer.parseInt(p[6]);
+                        } catch (NumberFormatException ignored) {
+                            // keep 0
+                        }
+                    }
+                    out.add(u);
+                }
+            }
+        } catch (IOException ignored) {
+            // treated as no accounts
+        }
+        return out;
+    }
+
+    private static boolean saveUsers(List<User> list) {
         List<String> lines = new ArrayList<>();
-        lines.add(makeLine("admin", "admin123", "Admin"));
+        for (User u : list) lines.add(u.toCsv());
         try {
             Files.write(Paths.get(FILE), lines, StandardCharsets.UTF_8);
-        } catch (IOException ignored) {
-            // nobody will be able to log in if the file cannot be written
+            return true;
+        } catch (IOException ex) {
+            return false;
         }
     }
 
-    /** Returns {username, role} when the login is correct, otherwise null. */
+    /** Returns {username, role} when the login is correct, otherwise null. Both cases are logged. */
     static String[] authenticate(String user, String pass) {
-        for (String line : readLines()) {
-            String[] p = line.split(",", -1);
-            if (p.length == 4 && p[0].equalsIgnoreCase(user) && p[2].equals(hash(pass, p[1]))) {
-                return new String[]{p[0], p[3]};
+        List<User> list = allUsers();
+        for (User u : list) {
+            if (u.name.equalsIgnoreCase(user) && u.hash.equals(hash(pass, u.salt))) {
+                u.lastLogin = now();
+                u.logins++;
+                saveUsers(list);
+                log(u.name, "Login", "");
+                return new String[]{u.name, u.role};
             }
         }
+        log(user, "Failed login", "Wrong username or password");
         return null;
     }
 
@@ -836,40 +1035,110 @@ class StoreUserStore {
         if (!pass.equals(confirm)) {
             return "Passwords do not match.";
         }
-        List<String> lines = readLines();
-        for (String line : lines) {
-            if (line.split(",", -1)[0].equalsIgnoreCase(user)) {
-                return "That username is already taken.";
-            }
+        List<User> list = allUsers();
+        for (User u : list) {
+            if (u.name.equalsIgnoreCase(user)) return "That username is already taken.";
         }
-        lines.add(makeLine(user, pass, "Staff"));
-        try {
-            Files.write(Paths.get(FILE), lines, StandardCharsets.UTF_8);
-        } catch (IOException ex) {
-            return "Could not save the account: " + ex.getMessage();
-        }
+        list.add(newUser(user, pass, "Staff"));
+        if (!saveUsers(list)) return "Could not save the account.";
+        log(user, "Account created", "New Staff account");
         return null;
     }
 
-    private static List<String> readLines() {
-        List<String> out = new ArrayList<>();
+    static String roleOf(String user) {
+        for (User u : allUsers()) if (u.name.equalsIgnoreCase(user)) return u.role;
+        return "Staff";
+    }
+
+    static void setRole(String user, String role) {
+        List<User> list = allUsers();
+        for (User u : list) if (u.name.equalsIgnoreCase(user)) u.role = role;
+        saveUsers(list);
+    }
+
+    static void deleteUser(String user) {
+        List<User> list = allUsers();
+        list.removeIf(u -> u.name.equalsIgnoreCase(user));
+        saveUsers(list);
+    }
+
+    // ---------- Activity log ----------
+    static void log(String user, String action, String details) {
+        String line = SariSariStore.esc(now()) + "," + SariSariStore.esc(user) + "," + SariSariStore.esc(action)
+                + "," + SariSariStore.esc(details);
         try {
-            if (Files.exists(Paths.get(FILE))) {
-                for (String l : Files.readAllLines(Paths.get(FILE), StandardCharsets.UTF_8)) {
-                    if (!l.isBlank()) out.add(l);
-                }
-            }
+            Files.write(Paths.get(LOG_FILE), List.of(line), StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (IOException ignored) {
-            // treated as no accounts
+            // the system keeps working even if the log cannot be written
+        }
+    }
+
+    static List<String[]> readLog() {
+        List<String[]> out = new ArrayList<>();
+        for (List<String> f : readCsv(Paths.get(LOG_FILE))) {
+            String[] r = {"", "", "", ""};
+            for (int i = 0; i < 4 && i < f.size(); i++) r[i] = f.get(i);
+            out.add(r);
         }
         return out;
     }
 
-    private static String makeLine(String user, String pass, String role) {
+    // ---------- Separate data for every account ----------
+    /** products_<user>.csv / sales_<user>.csv. The old products.csv / sales.csv still load for "admin". */
+    static Path dataFile(String user, String kind, boolean forSave) {
+        Path p = Paths.get(kind + "_" + user.toLowerCase() + ".csv");
+        if (!forSave && !Files.exists(p) && user.equalsIgnoreCase("admin")) {
+            Path legacy = Paths.get(kind + ".csv");
+            if (Files.exists(legacy)) return legacy;
+        }
+        return p;
+    }
+
+    static List<List<String>> readCsv(Path p) {
+        List<List<String>> rows = new ArrayList<>();
+        try {
+            if (Files.exists(p)) {
+                for (String line : Files.readAllLines(p, StandardCharsets.UTF_8)) {
+                    if (!line.isBlank()) rows.add(SariSariStore.splitCsv(line));
+                }
+            }
+        } catch (IOException ignored) {
+            // treated as empty
+        }
+        return rows;
+    }
+
+    static int countProducts(String user) {
+        int n = 0;
+        for (List<String> f : readCsv(dataFile(user, "products", false))) if (f.size() >= 5) n++;
+        return n;
+    }
+
+    static double totalSales(String user) {
+        double sum = 0;
+        for (List<String> f : readCsv(dataFile(user, "sales", false))) {
+            if (f.size() < 4) continue;
+            try {
+                sum += Double.parseDouble(f.get(3));
+            } catch (NumberFormatException ignored) {
+                // skip a damaged line
+            }
+        }
+        return sum;
+    }
+
+    // ---------- Passwords ----------
+    private static User newUser(String name, String pass, String role) {
         byte[] saltBytes = new byte[16];
         new SecureRandom().nextBytes(saltBytes);
-        String salt = Base64.getEncoder().encodeToString(saltBytes);
-        return user + "," + salt + "," + hash(pass, salt) + "," + role;
+        User u = new User();
+        u.name = name;
+        u.salt = Base64.getEncoder().encodeToString(saltBytes);
+        u.hash = hash(pass, u.salt);
+        u.role = role;
+        u.created = now();
+        return u;
     }
 
     private static String hash(String pass, String salt) {

@@ -1,0 +1,36 @@
+2026-11-19 08:21:22,admin,Login,
+2026-11-19 08:24:13,admin,Logout,
+2026-11-19 08:24:52,kim,Account created,New Staff account
+2026-11-19 08:24:57,kim,Login,
+2026-11-19 08:27:28,kim,Logout,
+2026-11-19 08:27:31,admin,Login,
+2026-11-19 08:27:48,admin,Account deleted,Shan
+2026-11-19 08:30:09,admin,Role changed,kim is now Admin
+2026-11-19 08:30:17,admin,Role changed,kim is now Staff
+2026-11-19 08:32:54,admin,Logout,
+2026-11-19 08:34:22,admin,Login,
+2026-11-19 08:34:42,admin,Logout,
+2026-11-19 08:35:27,admin,Login,
+2026-11-19 08:36:17,admin,Logout,
+2026-11-19 08:36:30,kurt,Account created,New Staff account
+2026-11-19 08:36:36,kurt,Login,
+2026-11-19 08:42:06,kurt,Logout,
+2026-11-19 08:42:11,admin,Login,
+2026-11-19 08:43:04,admin,Account deleted,kim
+2026-11-19 08:43:07,admin,Role changed,kurt is now Admin
+2026-11-19 08:43:11,admin,Role changed,kurt is now Staff
+2026-11-19 08:49:20,admin,Logout,
+2026-11-19 08:52:31,admin,Login,
+2026-11-19 08:55:46,admin,Login,
+2026-11-19 08:56:58,admin,Logout,
+2026-11-19 08:57:03,admin,Login,
+2026-11-19 09:00:31,admin,Login,
+2026-11-19 09:03:01,admin,Login,
+2026-11-19 09:03:56,admin,Login,
+2026-11-19 09:07:36,admin,Login,
+2026-11-19 09:08:00,admin,Logout,
+2026-11-19 09:08:07,shan,Account created,New Staff account
+2026-11-19 09:08:12,shan,Login,
+2026-11-19 09:11:25,shan,Logout,
+2026-11-19 09:11:29,admin,Login,
+2026-11-19 09:13:17,admin,Login,
